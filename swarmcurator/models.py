@@ -1,17 +1,42 @@
-"""swarmcurator.models — Standardized task, queue, lane, and batch models."""
+"""swarmcurator.models — Standardized task, queue, lane, batch, and telemetry models."""
 
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Literal, Sequence
 
-TaskStatus = Literal["pending", "leased", "completed", "failed", "canceled"]
+TaskStatus = Literal["pending", "leased", "completed", "failed", "dead_letter", "canceled"]
+
+_SAFE_IDENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return _now_utc().isoformat()
+
+
+def _parse_iso(iso_str: str) -> datetime:
+    try:
+        return datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+    except Exception:
+        return _now_utc()
+
+
+def sanitize_token(value: str, fallback: str = "default", max_len: int = 128) -> str:
+    """Sanitize identifier or lane name against control/path-traversal characters."""
+    if not value or not isinstance(value, str):
+        return fallback
+    clean = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", value.strip())
+    clean = clean.strip("._")
+    if not clean:
+        return fallback
+    return clean[:max_len]
 
 
 def compute_fingerprint(provider: str, external_id: str, title: str) -> str:
@@ -38,9 +63,9 @@ class TaskInputSource:
 
 @dataclass
 class CuratorTask:
-    """Universal normalized task representation supporting multi-provider & multi-input contexts."""
+    """Universal normalized task representation with retry and dead-letter governance."""
     task_id: str
-    provider: str  # "linear", "github", "kanban", "composite", "custom"
+    provider: str  # "linear", "github", "kanban", "composite", "generic", "custom"
     external_id: str
     title: str
     description: str = ""
@@ -49,14 +74,20 @@ class CuratorTask:
     labels: list[str] = field(default_factory=list)
     status: TaskStatus = "pending"
     assigned_agent: str | None = None
+    retry_count: int = 0
+    max_retries: int = 3
+    lease_ttl_seconds: int = 600  # 10 minutes lease TTL
+    error_message: str | None = None
     enqueued_at: str = field(default_factory=_now_iso)
     leased_at: str | None = None
     completed_at: str | None = None
     fingerprint: str = ""
-    inputs: list[dict[str, Any]] = field(default_factory=list)  # Multi-input sources / attachments
+    inputs: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.lane_id = sanitize_token(self.lane_id, fallback="default")
+        self.provider = sanitize_token(self.provider, fallback="generic")
         if not self.fingerprint:
             self.fingerprint = compute_fingerprint(self.provider, self.external_id, self.title)
 
@@ -80,6 +111,35 @@ class CuratorTask:
 
 
 @dataclass
+class LaneState:
+    """State tracking an actively locked workspace/repo lane with automatic lease TTL."""
+    lane_id: str
+    active_task_id: str
+    holder_agent: str
+    locked_at: str = field(default_factory=_now_iso)
+    lease_ttl_seconds: int = 600
+    expires_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.expires_at:
+            locked_dt = _parse_iso(self.locked_at)
+            exp_dt = locked_dt + timedelta(seconds=max(1, self.lease_ttl_seconds))
+            self.expires_at = exp_dt.isoformat()
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        current_time = now or _now_utc()
+        exp_dt = _parse_iso(self.expires_at)
+        return current_time >= exp_dt
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LaneState:
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
 class BatchAdmissionResult:
     """Result of admitting multiple tasks/inputs simultaneously."""
     admitted: list[CuratorTask] = field(default_factory=list)
@@ -100,16 +160,18 @@ class BatchAdmissionResult:
 
 
 @dataclass
-class LaneState:
-    """State tracking an actively locked workspace/repo lane."""
-    lane_id: str
-    active_task_id: str
-    holder_agent: str
-    locked_at: str = field(default_factory=_now_iso)
+class QueueStats:
+    """Comprehensive queue health and telemetry statistics."""
+    total_tasks: int
+    pending_count: int
+    leased_count: int
+    completed_count: int
+    failed_count: int
+    dead_letter_count: int
+    active_lanes_count: int
+    priority_distribution: dict[str, int]
+    oldest_pending_age_seconds: float
+    updated_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> LaneState:
-        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})

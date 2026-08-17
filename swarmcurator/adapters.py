@@ -1,9 +1,18 @@
-"""swarmcurator.adapters — Ingestion adapters for Linear, GitHub, Kanban, and Multi-Input streams."""
+"""swarmcurator.adapters — Ingestion adapters with sanitization and HMAC webhook verification."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import re
 from typing import Any, Mapping, Sequence
-from .models import CuratorTask, TaskInputSource
+from .models import CuratorTask, TaskInputSource, sanitize_token
+
+
+def _sanitize_label(label: str) -> str:
+    # Allow alphanumeric, colon, dash, underscore, dot
+    clean = re.sub(r"[^a-zA-Z0-9_\-\.:]", "_", label.strip()).strip("._")
+    return clean[:64] if clean else "label"
 
 
 def _normalize_labels(raw_labels: Any) -> list[str]:
@@ -13,23 +22,41 @@ def _normalize_labels(raw_labels: Any) -> list[str]:
             if isinstance(l, dict):
                 name = l.get("name", "")
                 if name:
-                    out.append(name)
+                    out.append(_sanitize_label(str(name)))
             elif isinstance(l, str) and l.strip():
-                out.append(l.strip())
+                out.append(_sanitize_label(l.strip()))
         return out
     elif isinstance(raw_labels, dict) and "nodes" in raw_labels:
-        return [n.get("name", "") for n in raw_labels.get("nodes", []) if n.get("name")]
+        return [_sanitize_label(n.get("name", "")) for n in raw_labels.get("nodes", []) if n.get("name")]
     return []
 
 
 def _extract_lane_id(labels: list[str], fallback: str = "default") -> str:
     for label in labels:
         lbl_lower = label.lower()
-        if lbl_lower.startswith("lane:"):
-            return lbl_lower.split(":", 1)[1].strip()
-        if lbl_lower.startswith("repo:"):
-            return lbl_lower.split(":", 1)[1].strip()
-    return fallback
+        if lbl_lower.startswith("lane:") or lbl_lower.startswith("lane_"):
+            delim = ":" if ":" in lbl_lower else "_"
+            return sanitize_token(lbl_lower.split(delim, 1)[1].strip())
+        if lbl_lower.startswith("repo:") or lbl_lower.startswith("repo_"):
+            delim = ":" if ":" in lbl_lower else "_"
+            return sanitize_token(lbl_lower.split(delim, 1)[1].strip())
+    return sanitize_token(fallback)
+
+
+def verify_github_signature(payload_bytes: bytes, signature_header: str, secret: str) -> bool:
+    """Verify GitHub webhook payload against X-Hub-Signature-256 header."""
+    if not signature_header or not secret:
+        return False
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header.strip())
+
+
+def verify_linear_signature(payload_bytes: bytes, signature_header: str, secret: str) -> bool:
+    """Verify Linear webhook payload against Linear-Signature header."""
+    if not signature_header or not secret:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature_header.strip())
 
 
 class LinearAdapter:
@@ -37,7 +64,7 @@ class LinearAdapter:
 
     @staticmethod
     def from_dict(issue: Mapping[str, Any]) -> CuratorTask:
-        ident = str(issue.get("identifier") or issue.get("id") or "LINEAR-000")
+        ident = sanitize_token(str(issue.get("identifier") or issue.get("id") or "LINEAR-000"))
         title = str(issue.get("title") or "")
         desc = str(issue.get("description") or "")
         labels = _normalize_labels(issue.get("labels", []))
@@ -102,7 +129,8 @@ class GitHubAdapter:
                 base_pri = 3
                 break
 
-        lane_id = _extract_lane_id(labels, fallback=repo_name)
+        clean_repo = sanitize_token(repo_name, fallback="github")
+        lane_id = _extract_lane_id(labels, fallback=clean_repo)
 
         task = CuratorTask(
             task_id=f"gh-{number}",
@@ -113,9 +141,9 @@ class GitHubAdapter:
             base_priority=base_pri,
             lane_id=lane_id,
             labels=labels,
-            metadata={"repo": repo_name, "url": issue.get("html_url", "")},
+            metadata={"repo": clean_repo, "url": issue.get("html_url", "")},
         )
-        task.add_input_source("github", ident, desc, {"repo": repo_name, "url": issue.get("html_url", "")})
+        task.add_input_source("github", ident, desc, {"repo": clean_repo, "url": issue.get("html_url", "")})
         return task
 
 
@@ -124,12 +152,13 @@ class KanbanAdapter:
 
     @staticmethod
     def from_dict(card: Mapping[str, Any]) -> CuratorTask:
-        card_id = str(card.get("id") or "KANBAN-000")
+        card_id = sanitize_token(str(card.get("id") or "KANBAN-000"))
         title = str(card.get("title") or "")
         desc = str(card.get("description") or card.get("content") or "")
         labels = _normalize_labels(card.get("labels", []))
         base_pri = int(card.get("priority", 2))
-        lane_id = str(card.get("lane_id") or card.get("column") or "kanban")
+        raw_lane = str(card.get("lane_id") or card.get("column") or "kanban")
+        lane_id = sanitize_token(raw_lane, fallback="kanban")
 
         task = CuratorTask(
             task_id=f"kanban-{card_id.lower()}",
@@ -165,16 +194,15 @@ class AutoAdapter:
         if not isinstance(item, (dict, Mapping)):
             raise TypeError(f"Expected dict or CuratorTask, got {type(item).__name__}")
 
-        # Check explicit provider key
         provider = str(item.get("provider", "")).lower()
         if provider == "linear":
             return LinearAdapter.from_dict(item)
         if provider == "github":
-            return GitHubAdapter.from_dict(item, repo_name=str(item.get("repo") or item.get("metadata", {}).get("repo") or "github"))
+            repo = str(item.get("repo") or item.get("metadata", {}).get("repo") or "github")
+            return GitHubAdapter.from_dict(item, repo_name=repo)
         if provider == "kanban":
             return KanbanAdapter.from_dict(item)
 
-        # Sniff keys
         if "identifier" in item or "team" in item:
             return LinearAdapter.from_dict(item)
         if "number" in item or "html_url" in item or "body" in item:
@@ -183,17 +211,16 @@ class AutoAdapter:
         if "column" in item:
             return KanbanAdapter.from_dict(item)
 
-        # Fallback to Generic / direct fields
         if "title" in item and ("task_id" in item or "id" in item or "external_id" in item):
-            task_id = str(item.get("task_id") or item.get("id") or item.get("external_id"))
+            task_id = sanitize_token(str(item.get("task_id") or item.get("id") or item.get("external_id")))
             return CuratorTask(
                 task_id=task_id,
-                provider=str(item.get("provider") or "generic"),
-                external_id=str(item.get("external_id") or task_id),
+                provider=sanitize_token(str(item.get("provider") or "generic")),
+                external_id=sanitize_token(str(item.get("external_id") or task_id)),
                 title=str(item.get("title")),
                 description=str(item.get("description") or item.get("desc") or ""),
                 base_priority=int(item.get("priority") or item.get("base_priority") or 2),
-                lane_id=str(item.get("lane_id") or item.get("lane") or "default"),
+                lane_id=sanitize_token(str(item.get("lane_id") or item.get("lane") or "default")),
                 labels=_normalize_labels(item.get("labels", [])),
                 inputs=item.get("inputs", []),
                 metadata=item.get("metadata", {}),
@@ -206,9 +233,9 @@ class CompositeTaskBuilder:
     """Fluent builder for composing a single unified task out of multiple heterogeneous input streams."""
 
     def __init__(self, task_id: str, title: str, lane_id: str = "default", base_priority: int = 2) -> None:
-        self.task_id = task_id
+        self.task_id = sanitize_token(task_id)
         self.title = title
-        self.lane_id = lane_id
+        self.lane_id = sanitize_token(lane_id)
         self.base_priority = base_priority
         self.description_parts: list[str] = []
         self.labels: list[str] = []
@@ -216,7 +243,7 @@ class CompositeTaskBuilder:
         self.metadata: dict[str, Any] = {}
 
     def add_linear_issue(self, issue: Mapping[str, Any]) -> CompositeTaskBuilder:
-        ident = str(issue.get("identifier") or issue.get("id") or "LINEAR")
+        ident = sanitize_token(str(issue.get("identifier") or issue.get("id") or "LINEAR"))
         desc = str(issue.get("description") or "")
         self.inputs.append(TaskInputSource("linear", ident, desc, {"project": issue.get("project")}).to_dict())
         if desc:
@@ -228,15 +255,18 @@ class CompositeTaskBuilder:
         ident = f"GH-{issue.get('number', issue.get('id', 'PR'))}"
         body = str(issue.get("body") or "")
         url = str(issue.get("html_url") or "")
-        self.inputs.append(TaskInputSource("github", ident, body, {"repo": repo, "url": url}).to_dict())
+        clean_repo = sanitize_token(repo, fallback="github")
+        self.inputs.append(TaskInputSource("github", ident, body, {"repo": clean_repo, "url": url}).to_dict())
         if body:
             self.description_parts.append(f"### GitHub Context ({ident}):\n{body}")
         return self
 
     def add_context(self, source_type: str, reference: str, content: str = "", metadata: dict[str, Any] | None = None) -> CompositeTaskBuilder:
-        self.inputs.append(TaskInputSource(source_type, reference, content, metadata or {}).to_dict())
+        clean_src = sanitize_token(source_type, fallback="context")
+        clean_ref = sanitize_token(reference, fallback="ref")
+        self.inputs.append(TaskInputSource(clean_src, clean_ref, content, metadata or {}).to_dict())
         if content:
-            self.description_parts.append(f"### {source_type.upper()} Context ({reference}):\n{content}")
+            self.description_parts.append(f"### {clean_src.upper()} Context ({clean_ref}):\n{content}")
         return self
 
     def build(self) -> CuratorTask:

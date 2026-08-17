@@ -1,6 +1,6 @@
 # 📥 SwarmCurator
 
-**Universal multi-provider task admission, priority aging, and lane-locking queue primitive for AI agent swarms.**
+**Hardened multi-provider task admission, priority aging, and lane-locking queue primitive for AI agent swarms.**
 
 [![PyPI](https://img.shields.io/pypi/v/swarmcurator.svg)](https://pypi.org/project/swarmcurator/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -11,9 +11,9 @@
 
 ## 🌟 What Sets SwarmCurator Apart
 
-In modern AI agent swarms, tasks arrive from diverse issue trackers (Linear, GitHub, Kanban). Without a unified admission queue, two agents will simultaneously attempt to edit the same repository or workspace, creating merge conflicts, race conditions, and worktree collisions. Furthermore, low-priority maintenance tickets starve forever behind urgent feature requests.
+In modern AI agent swarms, tasks arrive from diverse issue trackers (Linear, GitHub, Kanban). Without a unified admission queue, two agents will simultaneously attempt to edit the same repository or workspace, creating merge conflicts, race conditions, and worktree collisions. Furthermore, low-priority maintenance tickets starve forever behind urgent feature requests, and crashed workers leave locks orphaned indefinitely.
 
-**SwarmCurator** solves this with a **zero-dependency task admission engine** featuring dynamic anti-starvation priority aging and exclusive workspace lane locking.
+**SwarmCurator** solves this with an **enterprise-hardened, zero-dependency task admission engine** featuring dynamic anti-starvation priority aging, exclusive workspace lane locking, self-healing lease recovery, and dead-letter queue governance.
 
 ```
        ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
@@ -23,7 +23,7 @@ In modern AI agent swarms, tasks arrive from diverse issue trackers (Linear, Git
               ▼                    ▼                    ▼
        ┌────────────────────────────────────────────────────────┐
        │             SwarmCurator Ingestion Adapters            │
-       │       `LinearAdapter`, `GitHubAdapter`, `KanbanAdapter`│
+       │  `AutoAdapter`, `LinearAdapter`, `CompositeTaskBuilder`│
        └───────────────────────────┬────────────────────────────┘
                                    │
                                    ▼
@@ -31,15 +31,17 @@ In modern AI agent swarms, tasks arrive from diverse issue trackers (Linear, Git
        │           Unified Schema (`CuratorTask`)               │
        │  • task_id, external_id, title, priority (0-4)         │
        │  • lane_id (workspace/repo collision domain)           │
-       │  • deduplication_hash, labels, metadata                │
+       │  • deduplication_hash, multi-input streams, metadata   │
        └───────────────────────────┬────────────────────────────┘
                                    │
                                    ▼
        ┌────────────────────────────────────────────────────────┐
-       │       Priority Aging & Lane Locking Queue Engine       │
+       │   Hardened Priority Aging & Lane Locking Queue Engine  │
        │  • Anti-Starvation Formula: EffectivePriority(t)       │
        │  • Lane Locks: Active agents acquire exclusive lane_id │
-       │  • Atomic JSON persistence & FileLock protection       │
+       │  • Self-Healing: Lease TTL auto-reclaims crashed tasks │
+       │  • Retry & DLQ: Automatic exponential backoff & DLQ    │
+       │  • Atomic FileLock: Multi-process race protection      │
        └───────────────────────────┬────────────────────────────┘
                                    │
                                    ▼
@@ -52,9 +54,13 @@ In modern AI agent swarms, tasks arrive from diverse issue trackers (Linear, Git
 ### Core Capabilities:
 - 🚀 **Zero External Dependencies**: Pure Python 3.10+ standard library.
 - 🔌 **Universal Multi-Provider Adapters**: Ingest Linear GraphQL, GitHub REST/Webhook, or Hermes Kanban cards into normalized `CuratorTask` records.
+- 🌊 **Simultaneous Multi-Input Batching**: Admit batches of mixed issues at once with `admit_batch()`.
+- 🧩 **Composite Multi-Stream Context**: Attach issues, PR diffs, CI logs, and specs to a single task using `CompositeTaskBuilder`.
 - 🔒 **Exclusive Lane Locking**: Prevents multiple agents from working on the same repository, branch, or workspace domain concurrently.
 - ⏳ **Anti-Starvation Priority Aging**: Dynamically calculates effective priority so aging low-priority tickets bubble up fairly.
-- 🛡️ **Idempotent Deduplication**: Fingerprint hashing drops duplicate issue admissions automatically.
+- 🛡️ **Self-Healing Crash Recovery**: Configurable `lease_ttl_seconds` automatically reclaims tasks from dead/crashed worker processes.
+- 📬 **Dead-Letter Queue (DLQ)**: Configurable `max_retries` routes repeatedly failing tasks to dead-letter storage.
+- 🔐 **HMAC Webhook Security**: Built-in HMAC SHA256 signature verification for Linear and GitHub webhooks.
 - 🌐 **Unified Interfaces**: Python API, command-line tool (`swarmcurator`), and drop-in FastAPI router.
 
 ---
@@ -74,32 +80,22 @@ pip install swarmcurator[fastapi]
 ## ⚡ Quickstart
 
 ```python
-from swarmcurator import SwarmCuratorQueue, LinearAdapter, GitHubAdapter
+from swarmcurator import SwarmCuratorQueue, AutoAdapter, CompositeTaskBuilder
 
 # 1. Initialize queue (defaults to ~/.swarmcurator/queue.json)
 queue = SwarmCuratorQueue()
 
-# 2. Ingest tasks from Linear and GitHub
-task_1 = LinearAdapter.from_dict({
-    "identifier": "GRO-101",
-    "title": "Refactor auth middleware",
-    "priority": 1,  # High
-    "labels": [{"name": "lane:auth-service"}],
-})
-queue.admit(task_1)
-
-task_2 = GitHubAdapter.from_dict({
-    "number": 52,
-    "title": "Fix database connection leak",
-    "labels": ["bug", "priority:critical", "lane:auth-service"],
-}, repo_name="auth-service")
-queue.admit(task_2)
+# 2. Ingest batch of mixed tasks simultaneously
+queue.admit_batch([
+    {"identifier": "GRO-101", "title": "Refactor auth middleware", "priority": 1, "labels": ["lane:auth-service"]},
+    {"number": 52, "title": "Fix DB leak", "repo": "auth-service", "labels": ["priority:critical"]},
+])
 
 # 3. Pop next available task for Worker 1
 worker1_task = queue.pop_next(agent_id="agent-ned")
 print(f"Worker 1 leased: [{worker1_task.external_id}] (Lane '{worker1_task.lane_id}' is now LOCKED)")
 
-# 4. Worker 2 requests work -> Bypasses task_2 because lane 'auth-service' is locked!
+# 4. Worker 2 requests work -> Bypasses second task because lane 'auth-service' is locked!
 worker2_task = queue.pop_next(agent_id="agent-agy")
 print(f"Worker 2 received: {worker2_task} (Collision prevented!)")
 
@@ -112,30 +108,35 @@ print("Lane released for next worker.")
 
 ## 🛠️ CLI Reference
 
-SwarmCurator includes a terminal CLI:
+SwarmCurator includes a full-featured terminal CLI:
 
 ```bash
-# Admit a task into the queue
+# Admit a task into the queue with custom TTL and retries
 swarmcurator admit \
   --id "GRO-4780" \
   --title "Wire SwarmCurator to Prismatic Ingestion" \
   --provider "linear" \
   --priority 1 \
-  --lane "prismatic-core"
+  --lane "prismatic-core" \
+  --ttl 900 \
+  --max-retries 3
+
+# Admit a batch from file or stdin
+swarmcurator admit-batch --file incoming_tasks.json
 
 # Pop next available task for an agent
 swarmcurator pop --agent "agent-agy"
 
-# List active lane locks
-swarmcurator lanes
+# Inspect queue health and telemetry stats
+swarmcurator stats
 
 # Release a lane lock upon task completion
 swarmcurator release --lane "prismatic-core" --status "completed"
 
-# List tasks in queue
-swarmcurator list --status "pending"
+# List tasks in queue (including dead-letter)
+swarmcurator list --status "dead_letter"
 
-# Purge completed tasks
+# Purge completed/failed tasks
 swarmcurator purge
 ```
 
@@ -143,39 +144,32 @@ swarmcurator purge
 
 ## 🌐 FastAPI Integration
 
-Mount the admission router directly to your FastAPI gateway:
+Mount the hardened admission router directly to your FastAPI gateway:
 
 ```python
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI
 from swarmcurator.fastapi_router import create_router
 
 app = FastAPI(title="Swarm Admission Hub")
 
-def verify_token(x_token: str = Header(...)):
-    if x_token != "secret-key":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
 app.include_router(
-    create_router(auth_dependency=verify_token),
+    create_router(
+        github_webhook_secret="my-gh-secret",
+        linear_webhook_secret="my-linear-secret",
+    ),
     prefix="/api",
 )
 ```
 
 Exposes:
 - `GET /api/curator/queue` — List queue tasks.
-- `POST /api/curator/admit` — Ingest task payload.
+- `GET /api/curator/stats` — Live queue health & priority distribution telemetry.
+- `POST /api/curator/admit` — Ingest single task payload.
+- `POST /api/curator/admit/batch` — Ingest multiple tasks simultaneously.
 - `POST /api/curator/pop` — Pop next dispatchable task for an agent.
-- `POST /api/curator/release` — Release locked lane.
-- `GET /api/curator/lanes` — Inspect active lane locks.
-
----
-
-## 📁 Repository Examples
-
-Explore runnable examples in the [`examples/`](file:///c:/Users/Michael%20Gulden/Github/swarmcurator/examples) directory:
-
-- [`01_multi_provider_ingestion.py`](file:///c:/Users/Michael%20Gulden/Github/swarmcurator/examples/01_multi_provider_ingestion.py) — Ingestion across Linear, GitHub, and Kanban.
-- [`02_lane_locked_dispatch.py`](file:///c:/Users/Michael%20Gulden/Github/swarmcurator/examples/02_lane_locked_dispatch.py) — Lane locking mutual exclusion.
+- `POST /api/curator/release` — Release locked lane with retry support.
+- `POST /api/curator/webhook/github` — Secure GitHub webhook receiver with HMAC check.
+- `POST /api/curator/webhook/linear` — Secure Linear webhook receiver with HMAC check.
 
 ---
 

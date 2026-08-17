@@ -6,7 +6,9 @@ from .models import (
     TaskStatus,
     TaskInputSource,
     BatchAdmissionResult,
+    QueueStats,
     compute_fingerprint,
+    sanitize_token,
 )
 from .adapters import (
     LinearAdapter,
@@ -16,6 +18,8 @@ from .adapters import (
     AutoAdapter,
     CompositeTaskBuilder,
     MultiInputAggregator,
+    verify_github_signature,
+    verify_linear_signature,
 )
 from .aging import (
     compute_effective_priority,
@@ -23,7 +27,7 @@ from .aging import (
 )
 from .queue import SwarmCuratorQueue
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "CuratorTask",
@@ -31,7 +35,9 @@ __all__ = [
     "TaskStatus",
     "TaskInputSource",
     "BatchAdmissionResult",
+    "QueueStats",
     "compute_fingerprint",
+    "sanitize_token",
     "LinearAdapter",
     "GitHubAdapter",
     "KanbanAdapter",
@@ -39,6 +45,8 @@ __all__ = [
     "AutoAdapter",
     "CompositeTaskBuilder",
     "MultiInputAggregator",
+    "verify_github_signature",
+    "verify_linear_signature",
     "compute_effective_priority",
     "sort_tasks_by_effective_priority",
     "SwarmCuratorQueue",

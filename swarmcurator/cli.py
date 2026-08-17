@@ -1,4 +1,4 @@
-"""swarmcurator.cli — Command-line interface for SwarmCurator with batch admission support."""
+"""swarmcurator.cli — Command-line interface for SwarmCurator with stats & telemetry."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .queue import SwarmCuratorQueue
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="swarmcurator",
-        description="SwarmCurator — Task Admission, Priority Aging & Lane-Locking Queue",
+        description="SwarmCurator — Hardened Task Admission, Priority Aging & Lane-Locking Queue",
     )
     parser.add_argument(
         "--store",
@@ -35,6 +35,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     admit_cmd.add_argument("--priority", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Priority (0=Urgent to 4=Backlog)")
     admit_cmd.add_argument("--lane", default="default", help="Lane / workspace collision domain ID")
     admit_cmd.add_argument("--labels", default="", help="Comma-separated labels")
+    admit_cmd.add_argument("--ttl", type=int, default=600, help="Lease TTL seconds (default: 600s)")
+    admit_cmd.add_argument("--max-retries", type=int, default=3, help="Max failure retries before DLQ (default: 3)")
 
     # admit-batch
     batch_cmd = sub.add_parser("admit-batch", help="Admit multiple tasks from a JSON file or stdin")
@@ -50,13 +52,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     rel_cmd.add_argument("--lane", required=True, help="Lane ID to release")
     rel_cmd.add_argument("--task", default=None, help="Optional task ID")
     rel_cmd.add_argument("--status", default="completed", choices=["completed", "failed", "canceled"], help="Final task status")
+    rel_cmd.add_argument("--error", default=None, help="Optional failure error message")
 
     # list
     list_cmd = sub.add_parser("list", help="List tasks in the queue")
-    list_cmd.add_argument("--status", default=None, choices=["pending", "leased", "completed", "failed", "canceled"])
+    list_cmd.add_argument("--status", default=None, choices=["pending", "leased", "completed", "failed", "dead_letter", "canceled"])
 
     # lanes
     sub.add_parser("lanes", help="List all currently locked lanes")
+
+    # stats
+    sub.add_parser("stats", help="Show live queue health, priority distribution, and telemetry stats")
 
     # purge
     sub.add_parser("purge", help="Purge completed/failed tasks from queue")
@@ -76,6 +82,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_priority=args.priority,
             lane_id=args.lane,
             labels=labels,
+            lease_ttl_seconds=args.ttl,
+            max_retries=args.max_retries,
         )
         ok = queue.admit(task)
         res = {"ok": ok, "task": task.to_dict(), "admitted": ok}
@@ -108,7 +116,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
 
     if args.cmd == "release":
-        ok = queue.release_lane(lane_id=args.lane, task_id=args.task, final_status=args.status)
+        ok = queue.release_lane(
+            lane_id=args.lane,
+            task_id=args.task,
+            final_status=args.status,
+            error_message=args.error,
+        )
         print(json.dumps({"ok": ok, "lane_id": args.lane, "released": ok}, indent=2, sort_keys=True))
         return 0 if ok else 1
 
@@ -120,6 +133,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.cmd == "lanes":
         lanes = {k: v.to_dict() for k, v in queue.active_lanes().items()}
         print(json.dumps(lanes, indent=2, sort_keys=True))
+        return 0
+
+    if args.cmd == "stats":
+        stats = queue.get_stats()
+        print(json.dumps(stats.to_dict(), indent=2, sort_keys=True))
         return 0
 
     if args.cmd == "purge":

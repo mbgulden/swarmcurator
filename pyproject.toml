@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swarmcurator"
-version = "0.2.0"
+version = "0.3.0"
 description = "Universal task admission, priority aging, and lane-locking queue primitive for AI agent swarms."
 readme = "README.md"
 authors = [{ name = "Michael Gulden", email = "mbgulden@gmail.com" }]

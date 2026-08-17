@@ -1,14 +1,21 @@
-"""swarmcurator.fastapi_router — Drop-in FastAPI router for SwarmCurator with batch admission support."""
+"""swarmcurator.fastapi_router — Hardened drop-in FastAPI router for SwarmCurator with webhooks and telemetry stats."""
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List
 
 from .models import CuratorTask, TaskStatus
 from .queue import SwarmCuratorQueue
+from .adapters import (
+    GitHubAdapter,
+    LinearAdapter,
+    verify_github_signature,
+    verify_linear_signature,
+)
 
 try:
-    from fastapi import APIRouter, Body, Depends, HTTPException
+    from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
 except ImportError:
     raise ImportError(
         "FastAPI is required for swarmcurator.fastapi_router. "
@@ -19,8 +26,10 @@ except ImportError:
 def create_router(
     queue_instance: SwarmCuratorQueue | None = None,
     auth_dependency: Any = None,
+    github_webhook_secret: str | None = None,
+    linear_webhook_secret: str | None = None,
 ) -> APIRouter:
-    """Create a FastAPI APIRouter exposing SwarmCurator queue endpoints."""
+    """Create a FastAPI APIRouter exposing SwarmCurator queue, webhook, and telemetry endpoints."""
     q = queue_instance or SwarmCuratorQueue()
 
     dependencies = []
@@ -35,6 +44,12 @@ def create_router(
         tasks = q.list_tasks(status=status)
         return {"ok": True, "tasks": [t.to_dict() for t in tasks]}
 
+    @router.get("/stats")
+    def get_stats() -> Dict[str, Any]:
+        """Get live queue health and telemetry statistics."""
+        stats = q.get_stats()
+        return {"ok": True, "stats": stats.to_dict()}
+
     @router.post("/admit")
     def admit_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
         """Admit a single task into the admission queue."""
@@ -42,7 +57,7 @@ def create_router(
             task = CuratorTask.from_dict(payload) if "task_id" in payload else payload
             admitted = q.admit(task)
             if not admitted:
-                return {"ok": False, "detail": "Duplicate active task rejected", "admitted": False}
+                return {"ok": False, "detail": "Duplicate active task or queue full", "admitted": False}
             return {"ok": True, "admitted": True}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -70,13 +85,19 @@ def create_router(
 
     @router.post("/release")
     def release_lane_lock(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Release a lane lock upon task completion or failure."""
+        """Release a lane lock upon task completion or failure with retry support."""
         lane_id = payload.get("lane_id") or payload.get("lane")
         if not lane_id:
             raise HTTPException(status_code=400, detail="lane_id is required")
         task_id = payload.get("task_id") or payload.get("task")
         final_status: TaskStatus = payload.get("status", "completed")
-        released = q.release_lane(lane_id=lane_id, task_id=task_id, final_status=final_status)
+        error_msg = payload.get("error_message") or payload.get("error")
+        released = q.release_lane(
+            lane_id=lane_id,
+            task_id=task_id,
+            final_status=final_status,
+            error_message=error_msg,
+        )
         return {"ok": released, "lane_id": lane_id, "released": released}
 
     @router.get("/lanes")
@@ -84,6 +105,47 @@ def create_router(
         """List all currently active lane locks."""
         lanes = {k: v.to_dict() for k, v in q.active_lanes().items()}
         return {"ok": True, "lanes": lanes}
+
+    @router.post("/webhook/github")
+    async def github_webhook(
+        request: Request,
+        x_hub_signature_256: str | None = Header(None),
+    ) -> Dict[str, Any]:
+        """Secure webhook endpoint ingesting GitHub Issues with HMAC validation."""
+        body = await request.body()
+        if github_webhook_secret:
+            if not x_hub_signature_256 or not verify_github_signature(body, x_hub_signature_256, github_webhook_secret):
+                raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
+
+        payload = json.loads(body.decode("utf-8"))
+        issue_data = payload.get("issue")
+        if not issue_data or payload.get("action") not in ["opened", "reopened", "labeled", None]:
+            return {"ok": True, "detail": "Ignored action or non-issue event"}
+
+        repo_name = payload.get("repository", {}).get("name", "github")
+        task = GitHubAdapter.from_dict(issue_data, repo_name=repo_name)
+        admitted = q.admit(task)
+        return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
+
+    @router.post("/webhook/linear")
+    async def linear_webhook(
+        request: Request,
+        linear_signature: str | None = Header(None, alias="Linear-Signature"),
+    ) -> Dict[str, Any]:
+        """Secure webhook endpoint ingesting Linear Issues with HMAC validation."""
+        body = await request.body()
+        if linear_webhook_secret:
+            if not linear_signature or not verify_linear_signature(body, linear_signature, linear_webhook_secret):
+                raise HTTPException(status_code=401, detail="Invalid Linear webhook signature")
+
+        payload = json.loads(body.decode("utf-8"))
+        data = payload.get("data")
+        if not data or payload.get("type") != "Issue":
+            return {"ok": True, "detail": "Ignored event"}
+
+        task = LinearAdapter.from_dict(data)
+        admitted = q.admit(task)
+        return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
 
     return router
 
