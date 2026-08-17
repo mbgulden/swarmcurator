@@ -40,7 +40,7 @@ def test_lease_auto_expiry_and_reclamation(tmp_path: Path) -> None:
 
     # When pop_next is called after expiry, it should reclaim and lease to new agent
     # We can test _reclaim_expired_leases directly with future_time:
-    data = queue._load_data_unlocked()
+    data, _migrated = queue._load_data_unlocked()
     reclaimed = queue._reclaim_expired_leases(data, now=future_time)
     assert reclaimed == 1
     queue._save_data_unlocked(data)

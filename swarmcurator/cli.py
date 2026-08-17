@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from .models import CuratorTask
+from .models import CuratorTask, QueueFullError
 from .queue import SwarmCuratorQueue
 
 
@@ -54,6 +54,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     rel_cmd.add_argument("--status", default="completed", choices=["completed", "failed", "canceled"], help="Final task status")
     rel_cmd.add_argument("--error", default=None, help="Optional failure error message")
 
+    # cancel
+    cancel_cmd = sub.add_parser("cancel", help="Cancel a task by ID (pending or leased), releasing its lane lock")
+    cancel_cmd.add_argument("--id", required=True, dest="task_id", help="Task ID to cancel")
+
+    # set-priority
+    setpri_cmd = sub.add_parser("set-priority", help="Override priority of a pending task (operator escalation)")
+    setpri_cmd.add_argument("--id", required=True, dest="task_id", help="Task ID to modify")
+    setpri_cmd.add_argument("--priority", type=int, required=True, choices=[0, 1, 2, 3, 4], help="New priority (0=Urgent to 4=Backlog)")
+
     # list
     list_cmd = sub.add_parser("list", help="List tasks in the queue")
     list_cmd.add_argument("--status", default=None, choices=["pending", "leased", "completed", "failed", "dead_letter", "canceled"])
@@ -65,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub.add_parser("stats", help="Show live queue health, priority distribution, and telemetry stats")
 
     # purge
-    sub.add_parser("purge", help="Purge completed/failed tasks from queue")
+    sub.add_parser("purge", help="Purge completed/failed/canceled tasks from queue")
 
     args = parser.parse_args(argv)
     queue_path = Path(args.store) if args.store else None
@@ -85,8 +94,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             lease_ttl_seconds=args.ttl,
             max_retries=args.max_retries,
         )
-        ok = queue.admit(task)
+        try:
+            ok = queue.admit(task, raise_if_full=False)
+        except QueueFullError as exc:
+            print(json.dumps({"ok": False, "detail": str(exc)}, indent=2))
+            return 1
         res = {"ok": ok, "task": task.to_dict(), "admitted": ok}
+        if not ok:
+            res["detail"] = "Duplicate active task"
         print(json.dumps(res, indent=2, sort_keys=True))
         return 0 if ok else 1
 
@@ -124,6 +139,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(json.dumps({"ok": ok, "lane_id": args.lane, "released": ok}, indent=2, sort_keys=True))
         return 0 if ok else 1
+
+    if args.cmd == "cancel":
+        ok = queue.cancel_task(task_id=args.task_id)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.task_id, "canceled": True}, indent=2))
+            return 0
+        else:
+            print(json.dumps({"ok": False, "task_id": args.task_id, "detail": "Task not found or already terminal"}, indent=2))
+            return 1
+
+    if args.cmd == "set-priority":
+        ok = queue.set_priority(task_id=args.task_id, new_priority=args.priority)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.task_id, "new_priority": args.priority}, indent=2))
+            return 0
+        else:
+            print(json.dumps({"ok": False, "task_id": args.task_id, "detail": "Task not found or not in pending state"}, indent=2))
+            return 1
 
     if args.cmd == "list":
         tasks = [t.to_dict() for t in queue.list_tasks(status=args.status)]

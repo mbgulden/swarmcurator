@@ -4,16 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Sequence
-from .models import CuratorTask
+from .models import CuratorTask, _parse_iso
 
 DEFAULT_AGING_HALF_LIFE_SECONDS = 3600  # 1 hour
-
-
-def _parse_iso(iso_str: str) -> datetime:
-    try:
-        return datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-    except Exception:
-        return datetime.now(timezone.utc)
 
 
 def compute_effective_priority(
@@ -27,10 +20,16 @@ def compute_effective_priority(
       Base Score = (4 - base_priority) * 1000
       Aging Boost = (elapsed_seconds / half_life) * 100
       Effective Score = Base Score + Aging Boost
+
+    Examples:
+      - A P0 (Urgent) task enqueued now scores 4000.0
+      - A P4 (Backlog) task enqueued 3 hours ago with half_life=1h scores (0) + (10800/3600)*100 = 300.0
+      - A P3 (Low) task sitting for 4 hours beats a freshly queued P2 (Medium) task after ~36 hours.
+        This ensures low-priority work is never permanently starved.
     """
     current_time = now or datetime.now(timezone.utc)
     enqueued_dt = _parse_iso(task.enqueued_at)
-    
+
     elapsed_seconds = max(0.0, (current_time - enqueued_dt).total_seconds())
 
     # Base score: P0=4000, P1=3000, P2=2000, P3=1000, P4=0

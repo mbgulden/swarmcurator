@@ -176,11 +176,23 @@ class KanbanAdapter:
 
 
 class GenericAdapter:
-    """Generic fallback dictionary converter."""
+    """Generic fallback dictionary converter with clear validation errors."""
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> CuratorTask:
-        return CuratorTask.from_dict(dict(data))
+        d = dict(data)
+        # Validate required-ish fields with helpful messaging
+        if "task_id" not in d and "id" not in d and "external_id" not in d:
+            raise ValueError(
+                "GenericAdapter.from_dict: dict must contain at least one of "
+                "'task_id', 'id', or 'external_id'. "
+                f"Got keys: {sorted(d.keys())}"
+            )
+        if "title" not in d:
+            raise ValueError(
+                f"GenericAdapter.from_dict: 'title' is required. Got keys: {sorted(d.keys())}"
+            )
+        return CuratorTask.from_dict(d)
 
 
 class AutoAdapter:
@@ -211,7 +223,7 @@ class AutoAdapter:
         if "column" in item:
             return KanbanAdapter.from_dict(item)
 
-        if "title" in item and ("task_id" in item or "id" in item or "external_id" in item):
+        if "title" in item and (("task_id" in item) or ("id" in item) or ("external_id" in item)):
             task_id = sanitize_token(str(item.get("task_id") or item.get("id") or item.get("external_id")))
             return CuratorTask(
                 task_id=task_id,
@@ -230,7 +242,23 @@ class AutoAdapter:
 
 
 class CompositeTaskBuilder:
-    """Fluent builder for composing a single unified task out of multiple heterogeneous input streams."""
+    """Fluent builder for composing a single unified task out of multiple heterogeneous input streams.
+
+    Example use case: A single agent task that requires context from a Linear issue,
+    a failing GitHub PR, CI log output, and a design spec — all assembled into one
+    CuratorTask with a consolidated description and all streams accessible via task.inputs.
+
+    Usage::
+
+        task = (
+            CompositeTaskBuilder("fix-gro-101", "Fix telemetry drop under load", lane_id="gateway-service")
+            .add_linear_issue({"identifier": "GRO-101", "description": "Telemetry drops at 500rps"})
+            .add_github_pr_or_issue({"number": 314, "body": "PR: non-blocking flush attempt"}, repo="gateway")
+            .add_context("ci_log", "run/98765", content="AssertionError: Expected 100 packets, got 94")
+            .build()
+        )
+        queue.admit(task)
+    """
 
     def __init__(self, task_id: str, title: str, lane_id: str = "default", base_priority: int = 2) -> None:
         self.task_id = sanitize_token(task_id)

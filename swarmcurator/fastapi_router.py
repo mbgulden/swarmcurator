@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from .models import CuratorTask, TaskStatus
+from .models import CuratorTask, TaskStatus, QueueFullError
 from .queue import SwarmCuratorQueue
 from .adapters import (
     GitHubAdapter,
@@ -59,6 +59,8 @@ def create_router(
             if not admitted:
                 return {"ok": False, "detail": "Duplicate active task or queue full", "admitted": False}
             return {"ok": True, "admitted": True}
+        except QueueFullError as exc:
+            raise HTTPException(status_code=507, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
@@ -100,6 +102,35 @@ def create_router(
         )
         return {"ok": released, "lane_id": lane_id, "released": released}
 
+    @router.post("/cancel")
+    def cancel_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Cancel a pending or leased task by ID, releasing any associated lane lock."""
+        task_id = payload.get("task_id") or payload.get("id")
+        if not task_id:
+            raise HTTPException(status_code=400, detail="task_id is required")
+        canceled = q.cancel_task(task_id=task_id)
+        if not canceled:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found or already terminal")
+        return {"ok": True, "task_id": task_id, "canceled": True}
+
+    @router.post("/set-priority")
+    def set_task_priority(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Override the base priority of a pending task (operator escalation endpoint).
+
+        Use this to promote a low-priority bug to urgent (P0) after discovering
+        it is impacting production. Has no effect on already-dispatched tasks.
+        """
+        task_id = payload.get("task_id") or payload.get("id")
+        if not task_id:
+            raise HTTPException(status_code=400, detail="task_id is required")
+        new_priority = payload.get("priority")
+        if new_priority is None:
+            raise HTTPException(status_code=400, detail="priority (0-4) is required")
+        updated = q.set_priority(task_id=task_id, new_priority=int(new_priority))
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found or not in pending state")
+        return {"ok": True, "task_id": task_id, "new_priority": int(new_priority)}
+
     @router.get("/lanes")
     def get_lanes() -> Dict[str, Any]:
         """List all currently active lane locks."""
@@ -117,14 +148,21 @@ def create_router(
             if not x_hub_signature_256 or not verify_github_signature(body, x_hub_signature_256, github_webhook_secret):
                 raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
 
-        payload = json.loads(body.decode("utf-8"))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}")
+
         issue_data = payload.get("issue")
         if not issue_data or payload.get("action") not in ["opened", "reopened", "labeled", None]:
             return {"ok": True, "detail": "Ignored action or non-issue event"}
 
         repo_name = payload.get("repository", {}).get("name", "github")
         task = GitHubAdapter.from_dict(issue_data, repo_name=repo_name)
-        admitted = q.admit(task)
+        try:
+            admitted = q.admit(task)
+        except QueueFullError:
+            raise HTTPException(status_code=507, detail="Queue is at capacity")
         return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
 
     @router.post("/webhook/linear")
@@ -138,13 +176,20 @@ def create_router(
             if not linear_signature or not verify_linear_signature(body, linear_signature, linear_webhook_secret):
                 raise HTTPException(status_code=401, detail="Invalid Linear webhook signature")
 
-        payload = json.loads(body.decode("utf-8"))
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}")
+
         data = payload.get("data")
         if not data or payload.get("type") != "Issue":
             return {"ok": True, "detail": "Ignored event"}
 
         task = LinearAdapter.from_dict(data)
-        admitted = q.admit(task)
+        try:
+            admitted = q.admit(task)
+        except QueueFullError:
+            raise HTTPException(status_code=507, detail="Queue is at capacity")
         return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
 
     return router

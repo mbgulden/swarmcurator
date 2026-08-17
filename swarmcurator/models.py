@@ -10,6 +10,8 @@ from typing import Any, Literal, Sequence
 
 TaskStatus = Literal["pending", "leased", "completed", "failed", "dead_letter", "canceled"]
 
+CURRENT_SCHEMA_VERSION = 1
+
 _SAFE_IDENT_RE = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
 
 
@@ -43,6 +45,14 @@ def compute_fingerprint(provider: str, external_id: str, title: str) -> str:
     """Generate deterministic SHA256 fingerprint for deduplication."""
     raw = f"{provider.lower()}:{external_id.strip()}:{title.strip().lower()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+class QueueFullError(Exception):
+    """Raised when the queue has reached its maximum capacity."""
+
+    def __init__(self, max_size: int) -> None:
+        super().__init__(f"SwarmCurator queue is at capacity ({max_size} tasks). Purge completed tasks or increase max_queue_size.")
+        self.max_size = max_size
 
 
 @dataclass
@@ -90,6 +100,8 @@ class CuratorTask:
         self.provider = sanitize_token(self.provider, fallback="generic")
         if not self.fingerprint:
             self.fingerprint = compute_fingerprint(self.provider, self.external_id, self.title)
+        # Clamp priority to valid range
+        self.base_priority = max(0, min(4, int(self.base_priority)))
 
     def add_input_source(self, source_type: str, reference: str, content: str = "", metadata: dict[str, Any] | None = None) -> None:
         """Attach an auxiliary context or input stream to this task."""
@@ -106,7 +118,16 @@ class CuratorTask:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CuratorTask:
-        valid = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        known_fields = set(cls.__dataclass_fields__.keys())
+        unknown = set(data.keys()) - known_fields
+        if unknown:
+            import warnings
+            warnings.warn(
+                f"CuratorTask.from_dict: ignoring unknown fields: {sorted(unknown)}. "
+                "This may indicate a schema version mismatch. Check CURRENT_SCHEMA_VERSION.",
+                stacklevel=2,
+            )
+        valid = {k: v for k, v in data.items() if k in known_fields}
         return cls(**valid)
 
 
@@ -144,16 +165,20 @@ class BatchAdmissionResult:
     """Result of admitting multiple tasks/inputs simultaneously."""
     admitted: list[CuratorTask] = field(default_factory=list)
     duplicates: list[CuratorTask] = field(default_factory=list)
+    rejected_full: list[CuratorTask] = field(default_factory=list)
     total_admitted: int = 0
     total_duplicates: int = 0
+    total_rejected_full: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": True,
             "total_admitted": self.total_admitted,
             "total_duplicates": self.total_duplicates,
+            "total_rejected_full": self.total_rejected_full,
             "admitted_ids": [t.task_id for t in self.admitted],
             "duplicate_ids": [t.task_id for t in self.duplicates],
+            "rejected_full_ids": [t.task_id for t in self.rejected_full],
             "admitted": [t.to_dict() for t in self.admitted],
             "duplicates": [t.to_dict() for t in self.duplicates],
         }
@@ -168,9 +193,11 @@ class QueueStats:
     completed_count: int
     failed_count: int
     dead_letter_count: int
+    canceled_count: int
     active_lanes_count: int
     priority_distribution: dict[str, int]
     oldest_pending_age_seconds: float
+    schema_version: int = CURRENT_SCHEMA_VERSION
     updated_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:

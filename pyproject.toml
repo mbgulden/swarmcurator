@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "swarmcurator"
-version = "0.3.0"
-description = "Universal task admission, priority aging, and lane-locking queue primitive for AI agent swarms."
+version = "0.4.0"
+description = "Universal task admission, priority aging, lane-locking, and crash-recovery queue primitive for AI agent swarms."
 readme = "README.md"
 authors = [{ name = "Michael Gulden", email = "mbgulden@gmail.com" }]
 license = "MIT"
 requires-python = ">=3.10"
-keywords = ["task-queue", "priority-aging", "lane-locking", "linear", "github", "swarm", "agent", "fastapi"]
+keywords = ["task-queue", "priority-aging", "lane-locking", "crash-recovery", "linear", "github", "swarm", "agent", "fastapi"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -27,6 +27,7 @@ dependencies = []
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.100"]
+dev = ["pytest>=8", "pytest-cov", "mypy>=1.10", "ruff>=0.4"]
 
 [project.scripts]
 swarmcurator = "swarmcurator.cli:main"
@@ -41,3 +42,18 @@ swarmcurator = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
