@@ -1,4 +1,4 @@
-"""swarmcurator.cli — Command-line interface for SwarmCurator."""
+"""swarmcurator.cli — Command-line interface for SwarmCurator with batch admission support."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # admit
-    admit_cmd = sub.add_parser("admit", help="Admit a task into the queue")
+    admit_cmd = sub.add_parser("admit", help="Admit a single task into the queue")
     admit_cmd.add_argument("--id", required=True, dest="external_id", help="External issue ID (e.g. GRO-123, GH-45)")
     admit_cmd.add_argument("--title", required=True, help="Task title")
     admit_cmd.add_argument("--provider", default="generic", choices=["linear", "github", "kanban", "generic"], help="Source issue provider")
@@ -35,6 +35,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     admit_cmd.add_argument("--priority", type=int, default=2, choices=[0, 1, 2, 3, 4], help="Priority (0=Urgent to 4=Backlog)")
     admit_cmd.add_argument("--lane", default="default", help="Lane / workspace collision domain ID")
     admit_cmd.add_argument("--labels", default="", help="Comma-separated labels")
+
+    # admit-batch
+    batch_cmd = sub.add_parser("admit-batch", help="Admit multiple tasks from a JSON file or stdin")
+    batch_cmd.add_argument("--file", default=None, help="Path to JSON file containing array of tasks (reads stdin if omitted)")
 
     # pop
     pop_cmd = sub.add_parser("pop", help="Pop the next available task for an agent")
@@ -77,6 +81,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         res = {"ok": ok, "task": task.to_dict(), "admitted": ok}
         print(json.dumps(res, indent=2, sort_keys=True))
         return 0 if ok else 1
+
+    if args.cmd == "admit-batch":
+        if args.file:
+            raw_content = Path(args.file).read_text(encoding="utf-8")
+        else:
+            raw_content = sys.stdin.read()
+        items = json.loads(raw_content)
+        if isinstance(items, dict) and ("items" in items or "tasks" in items):
+            items = items.get("items") or items.get("tasks")
+        if not isinstance(items, list):
+            print(json.dumps({"ok": False, "detail": "Input JSON must be an array of tasks"}, indent=2))
+            return 1
+        res = queue.admit_batch(items)
+        print(json.dumps(res.to_dict(), indent=2, sort_keys=True))
+        return 0
 
     if args.cmd == "pop":
         available_lanes = [l.strip() for l in args.lanes.split(",") if l.strip()] or None

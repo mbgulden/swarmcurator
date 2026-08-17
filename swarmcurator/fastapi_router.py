@@ -1,8 +1,8 @@
-"""swarmcurator.fastapi_router — Drop-in FastAPI router for SwarmCurator."""
+"""swarmcurator.fastapi_router — Drop-in FastAPI router for SwarmCurator with batch admission support."""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from .models import CuratorTask, TaskStatus
 from .queue import SwarmCuratorQueue
@@ -37,15 +37,24 @@ def create_router(
 
     @router.post("/admit")
     def admit_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-        """Admit a new task into the admission queue."""
+        """Admit a single task into the admission queue."""
         try:
-            task = CuratorTask.from_dict(payload)
+            task = CuratorTask.from_dict(payload) if "task_id" in payload else payload
             admitted = q.admit(task)
             if not admitted:
                 return {"ok": False, "detail": "Duplicate active task rejected", "admitted": False}
-            return {"ok": True, "task": task.to_dict(), "admitted": True}
+            return {"ok": True, "admitted": True}
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    @router.post("/admit/batch")
+    def admit_batch_tasks(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+        """Admit multiple heterogeneous tasks/inputs simultaneously."""
+        items = payload.get("items") or payload.get("tasks") or []
+        if not isinstance(items, list):
+            raise HTTPException(status_code=400, detail="Expected 'items' or 'tasks' list")
+        res = q.admit_batch(items)
+        return res.to_dict()
 
     @router.post("/pop")
     def pop_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:

@@ -4,6 +4,8 @@ from .models import (
     CuratorTask,
     LaneState,
     TaskStatus,
+    TaskInputSource,
+    BatchAdmissionResult,
     compute_fingerprint,
 )
 from .adapters import (
@@ -11,6 +13,9 @@ from .adapters import (
     GitHubAdapter,
     KanbanAdapter,
     GenericAdapter,
+    AutoAdapter,
+    CompositeTaskBuilder,
+    MultiInputAggregator,
 )
 from .aging import (
     compute_effective_priority,
@@ -18,17 +23,22 @@ from .aging import (
 )
 from .queue import SwarmCuratorQueue
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "CuratorTask",
     "LaneState",
     "TaskStatus",
+    "TaskInputSource",
+    "BatchAdmissionResult",
     "compute_fingerprint",
     "LinearAdapter",
     "GitHubAdapter",
     "KanbanAdapter",
     "GenericAdapter",
+    "AutoAdapter",
+    "CompositeTaskBuilder",
+    "MultiInputAggregator",
     "compute_effective_priority",
     "sort_tasks_by_effective_priority",
     "SwarmCuratorQueue",

@@ -1,4 +1,4 @@
-"""swarmcurator.queue — Priority aging, lane-locking task admission queue."""
+"""swarmcurator.queue — Priority aging, lane-locking task admission queue with multi-input batch support."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from .models import CuratorTask, LaneState, TaskStatus, _now_iso
+from .models import CuratorTask, LaneState, TaskStatus, BatchAdmissionResult, _now_iso
+from .adapters import AutoAdapter
 from .aging import sort_tasks_by_effective_priority, compute_effective_priority
 
 
@@ -30,7 +31,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 class SwarmCuratorQueue:
-    """Persistent task admission queue with dynamic priority aging and exclusive lane locking."""
+    """Persistent task admission queue with dynamic priority aging, exclusive lane locking, and multi-input batch support."""
 
     def __init__(
         self,
@@ -52,23 +53,56 @@ class SwarmCuratorQueue:
         data["updated_at"] = _now_iso()
         _atomic_write_json(self.path, data)
 
-    def admit(self, task: CuratorTask) -> bool:
-        """Admit a new task into the queue. Returns False if duplicate fingerprint already exists."""
+    def admit(self, task: CuratorTask | dict[str, Any]) -> bool:
+        """Admit a single task into the queue. Returns False if duplicate fingerprint already exists."""
+        if not isinstance(task, CuratorTask):
+            task = AutoAdapter.from_any(task)
+
         data = self._load_data()
         existing_tasks = [CuratorTask.from_dict(t) for t in data.get("tasks", [])]
 
-        # Deduplication check: Do not admit duplicate active tasks
         active_fingerprints = {
             t.fingerprint for t in existing_tasks if t.status in ["pending", "leased"]
         }
         if task.fingerprint in active_fingerprints:
             return False
 
-        # Add task to queue
         existing_tasks.append(task)
         data["tasks"] = [t.to_dict() for t in existing_tasks]
         self._save_data(data)
         return True
+
+    def admit_batch(self, items: Sequence[CuratorTask | dict[str, Any]]) -> BatchAdmissionResult:
+        """Admit multiple tasks/inputs simultaneously in a single atomic operation."""
+        data = self._load_data()
+        existing_tasks = [CuratorTask.from_dict(t) for t in data.get("tasks", [])]
+
+        active_fingerprints = {
+            t.fingerprint for t in existing_tasks if t.status in ["pending", "leased"]
+        }
+
+        result = BatchAdmissionResult()
+
+        for raw_item in items:
+            try:
+                task = AutoAdapter.from_any(raw_item)
+            except Exception:
+                continue
+
+            if task.fingerprint in active_fingerprints:
+                result.duplicates.append(task)
+                result.total_duplicates += 1
+            else:
+                existing_tasks.append(task)
+                active_fingerprints.add(task.fingerprint)
+                result.admitted.append(task)
+                result.total_admitted += 1
+
+        if result.total_admitted > 0:
+            data["tasks"] = [t.to_dict() for t in existing_tasks]
+            self._save_data(data)
+
+        return result
 
     def pop_next(
         self,
@@ -80,24 +114,20 @@ class SwarmCuratorQueue:
         tasks = [CuratorTask.from_dict(t) for t in data.get("tasks", [])]
         active_lanes = data.get("lanes", {})
 
-        # 1. Filter pending tasks
         pending = [t for t in tasks if t.status == "pending"]
         if not pending:
             return None
 
-        # 2. Sort by dynamic effective priority
         sorted_pending = sort_tasks_by_effective_priority(
             pending,
             aging_half_life_seconds=self.aging_half_life,
         )
 
-        # 3. Find first task whose lane is unlocked
         selected_task: CuratorTask | None = None
         for candidate in sorted_pending:
             if available_lanes is not None and candidate.lane_id not in available_lanes:
                 continue
             if candidate.lane_id in active_lanes:
-                # Lane is locked by another active task
                 continue
             selected_task = candidate
             break
@@ -105,7 +135,6 @@ class SwarmCuratorQueue:
         if not selected_task:
             return None
 
-        # 4. Lease task and lock lane
         now = _now_iso()
         for idx, t in enumerate(tasks):
             if t.task_id == selected_task.task_id:
@@ -147,7 +176,6 @@ class SwarmCuratorQueue:
         if not target_task_id and lane_id not in active_lanes:
             return False
 
-        # Update task status
         now = _now_iso()
         found = False
         for idx, t in enumerate(tasks):
@@ -157,7 +185,6 @@ class SwarmCuratorQueue:
                 tasks[idx] = t
                 found = True
 
-        # Release lane lock
         if lane_id in active_lanes:
             del active_lanes[lane_id]
 
