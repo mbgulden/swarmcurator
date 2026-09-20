@@ -7,7 +7,7 @@ name = "swarmcurator"
 version = "0.4.0"
 description = "Universal task admission, priority aging, lane-locking, and crash-recovery queue primitive for AI agent swarms."
 readme = "README.md"
-authors = [{ name = "Michael Gulden", email = "mbgulden@gmail.com" }]
+authors = [{ name = "Michael Gulden", email = "michael@growthwebdev.com" }]
 license = "MIT"
 requires-python = ">=3.10"
 keywords = ["task-queue", "priority-aging", "lane-locking", "crash-recovery", "linear", "github", "swarm", "agent", "fastapi"]
