@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from .models import CuratorTask, TaskInputSource, sanitize_token
 
 
@@ -18,13 +20,13 @@ def _sanitize_label(label: str) -> str:
 def _normalize_labels(raw_labels: Any) -> list[str]:
     if isinstance(raw_labels, list):
         out = []
-        for l in raw_labels:
-            if isinstance(l, dict):
-                name = l.get("name", "")
+        for label in raw_labels:
+            if isinstance(label, dict):
+                name = label.get("name", "")
                 if name:
                     out.append(_sanitize_label(str(name)))
-            elif isinstance(l, str) and l.strip():
-                out.append(_sanitize_label(l.strip()))
+            elif isinstance(label, str) and label.strip():
+                out.append(_sanitize_label(label.strip()))
         return out
     elif isinstance(raw_labels, dict) and "nodes" in raw_labels:
         return [_sanitize_label(n.get("name", "")) for n in raw_labels.get("nodes", []) if n.get("name")]
