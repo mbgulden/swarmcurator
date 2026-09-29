@@ -1,6 +1,7 @@
 """tests/test_lane_locking.py — Unit tests for workspace/lane mutual exclusion."""
 
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 

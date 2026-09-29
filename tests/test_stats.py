@@ -1,6 +1,7 @@
 """tests/test_stats.py — Unit tests for QueueStats and telemetry computation."""
 
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 

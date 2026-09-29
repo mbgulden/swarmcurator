@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
-from .models import CuratorTask, TaskStatus, QueueFullError
-from .queue import SwarmCuratorQueue
 from .adapters import (
     GitHubAdapter,
     LinearAdapter,
     verify_github_signature,
     verify_linear_signature,
 )
+from .models import CuratorTask, QueueFullError, TaskStatus
+from .queue import SwarmCuratorQueue
 
 try:
     from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request
@@ -20,7 +20,7 @@ except ImportError:
     raise ImportError(
         "FastAPI is required for swarmcurator.fastapi_router. "
         "Install it with: pip install swarmcurator[fastapi]"
-    )
+    ) from None
 
 
 def create_router(
@@ -39,19 +39,19 @@ def create_router(
     router = APIRouter(prefix="/curator", tags=["SwarmCurator"], dependencies=dependencies)
 
     @router.get("/queue")
-    def get_queue(status: str | None = None) -> Dict[str, Any]:
+    def get_queue(status: str | None = None) -> dict[str, Any]:
         """List tasks in the queue, optionally filtered by status."""
         tasks = q.list_tasks(status=status)
         return {"ok": True, "tasks": [t.to_dict() for t in tasks]}
 
     @router.get("/stats")
-    def get_stats() -> Dict[str, Any]:
+    def get_stats() -> dict[str, Any]:
         """Get live queue health and telemetry statistics."""
         stats = q.get_stats()
         return {"ok": True, "stats": stats.to_dict()}
 
     @router.post("/admit")
-    def admit_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def admit_task(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Admit a single task into the admission queue."""
         try:
             task = CuratorTask.from_dict(payload) if "task_id" in payload else payload
@@ -60,12 +60,12 @@ def create_router(
                 return {"ok": False, "detail": "Duplicate active task or queue full", "admitted": False}
             return {"ok": True, "admitted": True}
         except QueueFullError as exc:
-            raise HTTPException(status_code=507, detail=str(exc))
+            raise HTTPException(status_code=507, detail=str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.post("/admit/batch")
-    def admit_batch_tasks(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def admit_batch_tasks(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Admit multiple heterogeneous tasks/inputs simultaneously."""
         items = payload.get("items") or payload.get("tasks") or []
         if not isinstance(items, list):
@@ -74,7 +74,7 @@ def create_router(
         return res.to_dict()
 
     @router.post("/pop")
-    def pop_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def pop_task(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Pop the next highest priority available task for an agent."""
         agent_id = payload.get("agent_id") or payload.get("agent")
         if not agent_id:
@@ -86,7 +86,7 @@ def create_router(
         return {"ok": True, "task": task.to_dict()}
 
     @router.post("/release")
-    def release_lane_lock(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def release_lane_lock(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Release a lane lock upon task completion or failure with retry support."""
         lane_id = payload.get("lane_id") or payload.get("lane")
         if not lane_id:
@@ -103,7 +103,7 @@ def create_router(
         return {"ok": released, "lane_id": lane_id, "released": released}
 
     @router.post("/cancel")
-    def cancel_task(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def cancel_task(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Cancel a pending or leased task by ID, releasing any associated lane lock."""
         task_id = payload.get("task_id") or payload.get("id")
         if not task_id:
@@ -114,7 +114,7 @@ def create_router(
         return {"ok": True, "task_id": task_id, "canceled": True}
 
     @router.post("/set-priority")
-    def set_task_priority(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    def set_task_priority(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:  # noqa: B008 - idiomatic FastAPI body marker
         """Override the base priority of a pending task (operator escalation endpoint).
 
         Use this to promote a low-priority bug to urgent (P0) after discovering
@@ -132,7 +132,7 @@ def create_router(
         return {"ok": True, "task_id": task_id, "new_priority": int(new_priority)}
 
     @router.get("/lanes")
-    def get_lanes() -> Dict[str, Any]:
+    def get_lanes() -> dict[str, Any]:
         """List all currently active lane locks."""
         lanes = {k: v.to_dict() for k, v in q.active_lanes().items()}
         return {"ok": True, "lanes": lanes}
@@ -141,17 +141,18 @@ def create_router(
     async def github_webhook(
         request: Request,
         x_hub_signature_256: str | None = Header(None),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Secure webhook endpoint ingesting GitHub Issues with HMAC validation."""
         body = await request.body()
-        if github_webhook_secret:
-            if not x_hub_signature_256 or not verify_github_signature(body, x_hub_signature_256, github_webhook_secret):
-                raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
+        if github_webhook_secret and (
+            not x_hub_signature_256 or not verify_github_signature(body, x_hub_signature_256, github_webhook_secret)
+        ):
+            raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature") from None
 
         try:
             payload = json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}") from exc
 
         issue_data = payload.get("issue")
         if not issue_data or payload.get("action") not in ["opened", "reopened", "labeled", None]:
@@ -161,25 +162,26 @@ def create_router(
         task = GitHubAdapter.from_dict(issue_data, repo_name=repo_name)
         try:
             admitted = q.admit(task)
-        except QueueFullError:
-            raise HTTPException(status_code=507, detail="Queue is at capacity")
+        except QueueFullError as exc:
+            raise HTTPException(status_code=507, detail="Queue is at capacity") from exc
         return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
 
     @router.post("/webhook/linear")
     async def linear_webhook(
         request: Request,
         linear_signature: str | None = Header(None, alias="Linear-Signature"),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Secure webhook endpoint ingesting Linear Issues with HMAC validation."""
         body = await request.body()
-        if linear_webhook_secret:
-            if not linear_signature or not verify_linear_signature(body, linear_signature, linear_webhook_secret):
-                raise HTTPException(status_code=401, detail="Invalid Linear webhook signature")
+        if linear_webhook_secret and (
+            not linear_signature or not verify_linear_signature(body, linear_signature, linear_webhook_secret)
+        ):
+            raise HTTPException(status_code=401, detail="Invalid Linear webhook signature") from None
 
         try:
             payload = json.loads(body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}")
+            raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {exc}") from exc
 
         data = payload.get("data")
         if not data or payload.get("type") != "Issue":
@@ -188,8 +190,8 @@ def create_router(
         task = LinearAdapter.from_dict(data)
         try:
             admitted = q.admit(task)
-        except QueueFullError:
-            raise HTTPException(status_code=507, detail="Queue is at capacity")
+        except QueueFullError as exc:
+            raise HTTPException(status_code=507, detail="Queue is at capacity") from exc
         return {"ok": admitted, "task_id": task.task_id, "admitted": admitted}
 
     return router

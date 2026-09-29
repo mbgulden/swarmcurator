@@ -1,11 +1,12 @@
 """tests/test_aging.py — Unit tests for priority aging and anti-starvation calculations."""
 
-from datetime import datetime, timezone, timedelta
-from swarmcurator.models import CuratorTask
+from datetime import datetime, timedelta, timezone
+
 from swarmcurator.aging import (
     compute_effective_priority,
     sort_tasks_by_effective_priority,
 )
+from swarmcurator.models import CuratorTask
 
 
 def test_priority_fresh_order() -> None:

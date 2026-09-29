@@ -1,7 +1,7 @@
 """tests/test_security_sanitization.py — Unit tests for token sanitization and injection guard."""
 
-from swarmcurator.models import sanitize_token, CuratorTask
 from swarmcurator.adapters import AutoAdapter
+from swarmcurator.models import sanitize_token
 
 
 def test_sanitize_token_edge_cases() -> None:

@@ -1,12 +1,15 @@
 """tests/test_fastapi.py — Unit tests for SwarmCurator FastAPI router endpoints."""
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from swarmcurator.queue import SwarmCuratorQueue
 
 try:
-    from fastapi import FastAPI, Header, HTTPException
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from swarmcurator.fastapi_router import create_router
     HAS_FASTAPI = True
 except ImportError:

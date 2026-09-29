@@ -21,12 +21,11 @@ Just the queue healing itself.
 """
 
 import tempfile
-import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from swarmcurator import SwarmCuratorQueue, CuratorTask
+
+from swarmcurator import CuratorTask, SwarmCuratorQueue
 from swarmcurator.queue import _file_lock
-from swarmcurator.models import _parse_iso, LaneState
 
 
 def _simulate_ttl_expiry(queue: SwarmCuratorQueue, lane_id: str) -> None:
@@ -103,13 +102,13 @@ def main() -> None:
         ned_task = queue.pop_next(agent_id="agent-ned")
         assert ned_task is not None
         print(f"   ✅ agent-ned leased: [{ned_task.external_id}] '{ned_task.title}'")
-        print(f"   🔒 Lane 'prismatic-core' is now LOCKED by agent-ned")
+        print("   🔒 Lane 'prismatic-core' is now LOCKED by agent-ned")
         print(f"   ⏱  Lease expires in: {ned_task.lease_ttl_seconds}s")
 
         # Verify no other agent can enter the same lane
         agy_task = queue.pop_next(agent_id="agent-agy")
         print()
-        print(f"⏸  Step 3: agent-agy tries to pop...")
+        print("⏸  Step 3: agent-agy tries to pop...")
         print(f"   ❌ agent-agy received: {agy_task}  (lane blocked — collision prevented!)")
         assert agy_task is None, "Expected None — lane should be locked!"
 
@@ -139,7 +138,7 @@ def main() -> None:
         print(f"   🎉 AUTO-RECOVERY: agent-agy received: [{recovered_task.external_id}] '{recovered_task.title}'")
         print(f"   ✅ Retry count on recovered task: {recovered_task.retry_count}/2")
         print(f"   ✅ Now assigned to: {recovered_task.assigned_agent}")
-        print(f"   ✅ Lane 'prismatic-core' re-locked under agent-agy — no data lost!")
+        print("   ✅ Lane 'prismatic-core' re-locked under agent-agy — no data lost!")
 
         # ----------------------------------------------------------------
         # 7. agent-agy completes successfully
@@ -151,7 +150,7 @@ def main() -> None:
             task_id=recovered_task.task_id,
             final_status="completed",
         )
-        print(f"   ✅ Lane 'prismatic-core' released")
+        print("   ✅ Lane 'prismatic-core' released")
 
         # Now GRO-5002 becomes available
         print()

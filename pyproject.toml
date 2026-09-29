@@ -27,7 +27,14 @@ dependencies = []
 
 [project.optional-dependencies]
 fastapi = ["fastapi>=0.100"]
-dev = ["pytest>=8", "pytest-cov", "mypy>=1.10", "ruff>=0.4"]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "mypy>=1.10",
+    "ruff>=0.4",
+    # Optional integration exercised by test_curator_coherence.py; not on PyPI.
+    "swarmledger @ git+https://github.com/mbgulden/swarmledger.git",
+]
 
 [project.scripts]
 swarmcurator = "swarmcurator.cli:main"

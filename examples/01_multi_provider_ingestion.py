@@ -5,12 +5,12 @@ Demonstrates how SwarmCurator normalizes tasks across Linear, GitHub, and Kanban
 
 import tempfile
 from pathlib import Path
+
 from swarmcurator import (
-    SwarmCuratorQueue,
-    LinearAdapter,
     GitHubAdapter,
     KanbanAdapter,
-    GenericAdapter,
+    LinearAdapter,
+    SwarmCuratorQueue,
 )
 
 

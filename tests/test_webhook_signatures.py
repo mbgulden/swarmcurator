@@ -1,7 +1,8 @@
 """tests/test_webhook_signatures.py — Unit tests for GitHub and Linear webhook HMAC verification."""
 
-import hmac
 import hashlib
+import hmac
+
 from swarmcurator.adapters import verify_github_signature, verify_linear_signature
 
 
