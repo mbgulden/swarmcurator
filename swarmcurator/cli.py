@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
+from . import __version__ as _VERSION
 from .models import CuratorTask, QueueFullError
 from .queue import SwarmCuratorQueue
 
@@ -16,6 +17,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="swarmcurator",
         description="SwarmCurator — Hardened Task Admission, Priority Aging & Lane-Locking Queue",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_VERSION}",
     )
     parser.add_argument(
         "--store",
@@ -81,7 +87,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     queue = SwarmCuratorQueue(path=queue_path)
 
     if args.cmd == "admit":
-        labels = [l.strip() for l in args.labels.split(",") if l.strip()]
+        labels = [label.strip() for label in args.labels.split(",") if label.strip()]
         task = CuratorTask(
             task_id=f"{args.provider}-{args.external_id.lower()}",
             provider=args.provider,
@@ -106,10 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if ok else 1
 
     if args.cmd == "admit-batch":
-        if args.file:
-            raw_content = Path(args.file).read_text(encoding="utf-8")
-        else:
-            raw_content = sys.stdin.read()
+        raw_content = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
         items = json.loads(raw_content)
         if isinstance(items, dict) and ("items" in items or "tasks" in items):
             items = items.get("items") or items.get("tasks")
@@ -121,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.cmd == "pop":
-        available_lanes = [l.strip() for l in args.lanes.split(",") if l.strip()] or None
+        available_lanes = [lane.strip() for lane in args.lanes.split(",") if lane.strip()] or None
         task = queue.pop_next(agent_id=args.agent, available_lanes=available_lanes)
         if task:
             print(json.dumps({"ok": True, "task": task.to_dict()}, indent=2, sort_keys=True))
