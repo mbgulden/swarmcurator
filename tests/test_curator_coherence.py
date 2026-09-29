@@ -4,12 +4,11 @@ Tests for SwarmCurator Cache Coherence and Semantic Attention Distillation.
 
 import tempfile
 from pathlib import Path
+
 import pytest
 
 from swarmcurator.coherence import CacheCoherenceManager
 from swarmcurator.distiller import SemanticAttentionDistiller
-from swarmledger.core.node import EventType
-from swarmledger.storage.engine import StorageEngine
 
 
 def test_cache_invalidation_on_transaction_abort():
@@ -39,6 +38,10 @@ def test_cache_invalidation_on_transaction_abort():
 
 
 def test_semantic_attention_distiller_on_merkle_dag():
+    pytest.importorskip("swarmledger", reason="swarmledger not installed")
+    from swarmledger.core.node import EventType
+    from swarmledger.storage.engine import StorageEngine
+
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "ledger.db"
         engine = StorageEngine(db_path=db_path)
@@ -49,7 +52,7 @@ def test_semantic_attention_distiller_on_merkle_dag():
         n2 = engine.append_node(span_id, EventType.MUTATE, "agent_x", {"tx_id": "tx_refactor_99", "lines_changed": 25}, [n1.node_id])
         n3 = engine.append_node(span_id, EventType.PROOF, "proof_bot", {"proof_id": "prf_ast_cert_42"}, [n2.node_id])
         n4 = engine.append_node(span_id, EventType.GATE, "gate_bot", {"escalation_score": 0.35}, [n3.node_id])
-        n5 = engine.append_node(span_id, EventType.COMMIT, "hypervisor", {"status": "COMMITTED"}, [n4.node_id])
+        _n5 = engine.append_node(span_id, EventType.COMMIT, "hypervisor", {"status": "COMMITTED"}, [n4.node_id])
 
         distiller = SemanticAttentionDistiller(engine)
         brief = distiller.distill_span(span_id)
