@@ -1,9 +1,10 @@
 """tests/test_priority_override.py — Tests for set_priority() dynamic task escalation."""
 
 from pathlib import Path
+
+from swarmcurator.aging import sort_tasks_by_effective_priority
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
-from swarmcurator.aging import sort_tasks_by_effective_priority
 
 
 def _make_task(task_id: str, priority: int, lane: str | None = None) -> CuratorTask:
