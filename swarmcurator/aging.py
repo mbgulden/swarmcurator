@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Sequence
+
 from .models import CuratorTask, _parse_iso
 
 DEFAULT_AGING_HALF_LIFE_SECONDS = 3600  # 1 hour
