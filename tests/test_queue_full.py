@@ -1,7 +1,9 @@
 """tests/test_queue_full.py — Tests for QueueFullError and rejected_full tracking in batch admission."""
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from swarmcurator.models import CuratorTask, QueueFullError
 from swarmcurator.queue import SwarmCuratorQueue
 
