@@ -1,6 +1,7 @@
 """tests/test_cancel_task.py — Tests for cancel_task() on pending and leased tasks."""
 
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 
