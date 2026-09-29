@@ -7,25 +7,38 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING
 
-from swarmledger.core.node import EventType, LedgerNode
-from swarmledger.storage.engine import StorageEngine
+if TYPE_CHECKING:
+    from swarmledger.storage.engine import StorageEngine
 
 logger = logging.getLogger("swarmcurator.distiller")
+
+
+def _require_event_type() -> type:
+    """Import SwarmLedger's EventType lazily — swarmledger is an optional integration."""
+    try:
+        from swarmledger.core.node import EventType
+    except ImportError as exc:
+        raise ImportError(
+            "SemanticAttentionDistiller requires the 'swarmledger' package, "
+            "which is not published on PyPI. Install it from GitHub with:\n"
+            "    pip install git+https://github.com/mbgulden/swarmledger.git"
+        ) from exc
+    return EventType
 
 
 @dataclass
 class ExecutiveBriefing:
     span_id: str
-    tx_id: Optional[str]
+    tx_id: str | None
     agent_id: str
     total_nodes: int
     mutations_count: int
-    proof_certificates: List[str]
-    escalation_scores: List[float]
+    proof_certificates: list[str]
+    escalation_scores: list[float]
     final_state: str  # "COMMITTED", "ABORTED", "PENDING"
-    summary_bullets: List[str] = field(default_factory=list)
+    summary_bullets: list[str] = field(default_factory=list)
 
     def to_markdown(self) -> str:
         status_badge = "🟢 COMMITTED" if self.final_state == "COMMITTED" else "🔴 ABORTED"
@@ -54,6 +67,7 @@ class SemanticAttentionDistiller:
         self.engine = engine
 
     def distill_span(self, span_id: str) -> ExecutiveBriefing:
+        EventType = _require_event_type()
         nodes = self.engine.get_span_nodes(span_id)
         if not nodes:
             return ExecutiveBriefing(
