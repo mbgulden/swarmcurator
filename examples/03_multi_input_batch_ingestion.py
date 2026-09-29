@@ -7,10 +7,10 @@ Demonstrates:
 
 import tempfile
 from pathlib import Path
+
 from swarmcurator import (
-    SwarmCuratorQueue,
     CompositeTaskBuilder,
-    AutoAdapter,
+    SwarmCuratorQueue,
 )
 
 
