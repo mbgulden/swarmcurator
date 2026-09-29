@@ -1,10 +1,10 @@
 """tests/test_adapters.py — Unit tests for multi-provider issue adapters."""
 
 from swarmcurator.adapters import (
-    LinearAdapter,
+    GenericAdapter,
     GitHubAdapter,
     KanbanAdapter,
-    GenericAdapter,
+    LinearAdapter,
 )
 
 
