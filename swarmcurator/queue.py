@@ -2,34 +2,35 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
+import threading
 import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any
 
+from .adapters import AutoAdapter
+from .aging import sort_tasks_by_effective_priority
 from .models import (
     CURRENT_SCHEMA_VERSION,
+    BatchAdmissionResult,
     CuratorTask,
     LaneState,
     QueueFullError,
-    TaskStatus,
-    BatchAdmissionResult,
     QueueStats,
+    TaskStatus,
     _now_iso,
     _now_utc,
     _parse_iso,
 )
-from .adapters import AutoAdapter
-from .aging import sort_tasks_by_effective_priority, compute_effective_priority
 
 DEFAULT_MAX_QUEUE_SIZE = 10_000
 
-import threading
 
 _THREAD_LOCKS: dict[str, threading.Lock] = {}
 _THREAD_LOCKS_META = threading.Lock()
@@ -66,9 +67,11 @@ def _file_lock(lock_path: Path, timeout_seconds: float = 10.0) -> Iterator[None]
     f_desc = None
 
     try:
-        import fcntl
+        import fcntl as _fcntl
+
         has_fcntl = True
     except ImportError:
+        _fcntl = None  # type: ignore[assignment]
         has_fcntl = False
 
     # Level 1: acquire thread lock first (blocks until this thread has sole access)
@@ -76,8 +79,9 @@ def _file_lock(lock_path: Path, timeout_seconds: float = 10.0) -> Iterator[None]
     try:
         # Level 2: acquire cross-process file lock
         if has_fcntl:
-            import fcntl as _fcntl
-            f_desc = open(lock_file, "w")
+            # fd intentionally held open: flock(LOCK_EX) is bound to this open file
+            # description and releases on close, so a context manager would break the lock.
+            f_desc = open(lock_file, "w")  # noqa: SIM115
             # Blocking lock — waits until the process-level lock is available
             # One fd opened once per context, so flock upgrade works correctly
             _fcntl.flock(f_desc, _fcntl.LOCK_EX)
@@ -87,19 +91,17 @@ def _file_lock(lock_path: Path, timeout_seconds: float = 10.0) -> Iterator[None]
             while True:
                 elapsed = time.monotonic() - start
                 if elapsed >= timeout_seconds:
-                    try:
+                    with contextlib.suppress(Exception):
                         lock_file.unlink(missing_ok=True)
-                    except Exception:
-                        pass
                     try:
                         fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_RDWR)
                         os.close(fd)
                         break
-                    except OSError:
+                    except OSError as exc:
                         raise TimeoutError(
                             f"SwarmCurator: could not acquire file lock for {lock_path} "
                             f"after {timeout_seconds:.1f}s. Check for stuck processes or stale lock at {lock_file}."
-                        )
+                        ) from exc
                 try:
                     fd = os.open(str(lock_file), os.O_CREAT | os.O_EXCL | os.O_RDWR)
                     os.close(fd)
@@ -111,22 +113,12 @@ def _file_lock(lock_path: Path, timeout_seconds: float = 10.0) -> Iterator[None]
             yield
         finally:
             if has_fcntl and f_desc is not None:
-                try:
-                    import fcntl as _fcntl
+                with contextlib.suppress(Exception):
                     _fcntl.flock(f_desc, _fcntl.LOCK_UN)
                     f_desc.close()
-                except Exception:
-                    pass
-            if not has_fcntl:
-                try:
+            if not has_fcntl or f_desc is not None:
+                with contextlib.suppress(Exception):
                     lock_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
-            elif f_desc is not None:
-                try:
-                    lock_file.unlink(missing_ok=True)
-                except Exception:
-                    pass
     finally:
         # Always release the thread lock
         thread_lock.release()
