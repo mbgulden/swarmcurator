@@ -1,6 +1,7 @@
 """tests/test_queue.py — Unit tests for atomic queue operations and deduplication."""
 
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 
