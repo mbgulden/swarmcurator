@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone, timedelta
-from typing import Any, Literal, Sequence
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal
 
 TaskStatus = Literal["pending", "leased", "completed", "failed", "dead_letter", "canceled"]
 
