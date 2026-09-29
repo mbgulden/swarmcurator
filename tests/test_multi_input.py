@@ -2,14 +2,15 @@
 
 import json
 from pathlib import Path
-from swarmcurator.models import CuratorTask
-from swarmcurator.adapters import AutoAdapter, CompositeTaskBuilder, MultiInputAggregator
-from swarmcurator.queue import SwarmCuratorQueue
+
+from swarmcurator.adapters import AutoAdapter, CompositeTaskBuilder
 from swarmcurator.cli import main
+from swarmcurator.queue import SwarmCuratorQueue
 
 try:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from swarmcurator.fastapi_router import create_router
     HAS_FASTAPI = True
 except ImportError:
