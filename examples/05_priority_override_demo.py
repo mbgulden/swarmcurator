@@ -14,7 +14,8 @@ updated priority ordering without any restart or rebuild.
 
 import tempfile
 from pathlib import Path
-from swarmcurator import SwarmCuratorQueue, CuratorTask
+
+from swarmcurator import CuratorTask, SwarmCuratorQueue
 from swarmcurator.aging import compute_effective_priority
 
 
@@ -105,7 +106,7 @@ def main() -> None:
 
         print(f"   ✅ agent-agy-oncall received: [{dispatched.external_id}] '{dispatched.title}'")
         print(f"   ✅ Priority: P{dispatched.base_priority} (was P3, now P0 — Urgent)")
-        print(f"   ✅ Incident response started. Zero re-queue needed.")
+        print("   ✅ Incident response started. Zero re-queue needed.")
 
         # ----------------------------------------------------------------
         # De-escalation after incident resolved
