@@ -1,7 +1,8 @@
 """tests/test_lease_expiry.py — Unit tests for automatic crash recovery via lease TTL expiration."""
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 
