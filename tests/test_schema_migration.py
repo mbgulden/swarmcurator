@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+
 from swarmcurator.models import CURRENT_SCHEMA_VERSION, CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue, _migrate_data
 
