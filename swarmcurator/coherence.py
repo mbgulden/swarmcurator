@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 logger = logging.getLogger("swarmcurator.coherence")
 
@@ -19,8 +19,8 @@ class CachedMemoryEntry:
     tx_id: str
     key: str
     content: Any
-    embedding: Optional[List[float]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class CacheCoherenceManager:
@@ -29,16 +29,16 @@ class CacheCoherenceManager:
     """
 
     def __init__(self):
-        self._entries: Dict[str, CachedMemoryEntry] = {}
-        self._tx_index: Dict[str, Set[str]] = {}  # tx_id -> Set of entry_ids
+        self._entries: dict[str, CachedMemoryEntry] = {}
+        self._tx_index: dict[str, set[str]] = {}  # tx_id -> Set of entry_ids
 
     def put(
         self,
         key: str,
         content: Any,
         tx_id: str,
-        embedding: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        embedding: list[float] | None = None,
+        metadata: dict[str, Any] | None = None
     ) -> str:
         """Stores a cached item associated with a transaction ID."""
         import uuid
@@ -55,10 +55,10 @@ class CacheCoherenceManager:
         self._tx_index.setdefault(tx_id, set()).add(entry_id)
         return entry_id
 
-    def get(self, entry_id: str) -> Optional[CachedMemoryEntry]:
+    def get(self, entry_id: str) -> CachedMemoryEntry | None:
         return self._entries.get(entry_id)
 
-    def get_by_key(self, key: str) -> List[CachedMemoryEntry]:
+    def get_by_key(self, key: str) -> list[CachedMemoryEntry]:
         return [e for e in self._entries.values() if e.key == key]
 
     def invalidate_transaction(self, tx_id: str) -> int:
