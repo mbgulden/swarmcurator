@@ -2,6 +2,7 @@
 
 import concurrent.futures
 from pathlib import Path
+
 from swarmcurator.models import CuratorTask
 from swarmcurator.queue import SwarmCuratorQueue
 
