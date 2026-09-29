@@ -5,7 +5,8 @@ Demonstrates SwarmCurator's lane locking mutual exclusion and priority aging dis
 
 import tempfile
 from pathlib import Path
-from swarmcurator import SwarmCuratorQueue, CuratorTask
+
+from swarmcurator import CuratorTask, SwarmCuratorQueue
 
 
 def main() -> None:
@@ -59,7 +60,7 @@ def main() -> None:
         # GRO-102 is blocked because 'repo-backend' is currently locked!
         w2_task = queue.pop_next(agent_id="agent-agy")
         print(f"\n🚀 3. Agent 'AGY' popped task: [{w2_task.external_id}] '{w2_task.title}'")
-        print(f"   • Note: GRO-102 was bypassed to prevent multi-agent collision on 'repo-backend'!")
+        print("   • Note: GRO-102 was bypassed to prevent multi-agent collision on 'repo-backend'!")
         print(f"   • Locked Lane: '{w2_task.lane_id}' is now HELD by agent-agy")
 
         # Worker 3 requests work while both lanes are locked
@@ -68,7 +69,7 @@ def main() -> None:
 
         # Worker 1 completes task and releases lane
         queue.release_lane(lane_id="repo-backend", task_id="t1", final_status="completed")
-        print(f"\n🔓 5. Agent 'Ned' completed task and RELEASED lane 'repo-backend'")
+        print("\n🔓 5. Agent 'Ned' completed task and RELEASED lane 'repo-backend'")
 
         # Now Worker 3 can safely pop GRO-102!
         w3_task_retry = queue.pop_next(agent_id="agent-jules")
